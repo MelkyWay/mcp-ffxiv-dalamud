@@ -14,7 +14,7 @@ export function search(
   query: string,
   limit = 20
 ): SearchResult[] {
-  const clampedLimit = Math.min(Math.max(1, Math.floor(limit)), 100);
+  const clampedLimit = Number.isFinite(limit) ? Math.min(Math.max(1, Math.floor(limit)), 100) : 20;
   const q = query.toLowerCase().trim();
   if (!q) return [];
 
@@ -23,7 +23,7 @@ export function search(
   for (const ns of cache.namespaces) {
     for (const type of ns.types) {
       const name = type.name.toLowerCase();
-      const summary = type.summary.toLowerCase();
+      const summary = (type.summary ?? "").toLowerCase();
       const fullName = `${type.namespace}.${type.name}`.toLowerCase();
 
       let score = 0;
@@ -43,7 +43,7 @@ export function search(
       // Bonus: if member names match and members are loaded
       if (score === 0 && type.members) {
         for (const m of type.members) {
-          if (m.name.toLowerCase().includes(q) || m.summary.toLowerCase().includes(q)) {
+          if ((m.name ?? "").toLowerCase().includes(q) || (m.summary ?? "").toLowerCase().includes(q)) {
             score = 25;
             break;
           }

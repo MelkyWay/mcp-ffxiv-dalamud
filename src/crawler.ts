@@ -280,7 +280,8 @@ function isValidNamespace(ns: unknown): boolean {
       t !== null &&
       typeof (t as any).name === "string" &&
       typeof (t as any).namespace === "string" &&
-      typeof (t as any).url === "string"
+      typeof (t as any).url === "string" &&
+      typeof (t as any).kind === "string"
   );
 }
 

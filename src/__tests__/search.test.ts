@@ -157,15 +157,47 @@ describe("search", () => {
     expect(results.length).toBeLessThanOrEqual(2);
   });
 
-  it("treats NaN limit as default (clamps to 1)", () => {
+  it("treats NaN limit as default of 20, returning results normally", () => {
     const results = search(fakeCache, "IClientState", NaN);
-    // NaN → Math.floor(NaN) = NaN → Math.max(1, NaN) = 1
-    expect(results.length).toBeGreaterThanOrEqual(0);
+    expect(results.length).toBe(1);
+    expect(results[0].type.name).toBe("IClientState");
   });
 
   it("treats Infinity limit as max 100", () => {
     const results = search(fakeCache, "i", Infinity);
     expect(results.length).toBeLessThanOrEqual(100);
+  });
+
+  it("does not crash when type summary is missing", () => {
+    const cacheNoSummary: DalamudCache = {
+      ...fakeCache,
+      namespaces: [
+        {
+          ...fakeCache.namespaces[0],
+          types: [{ ...fakeCache.namespaces[0].types[0], summary: undefined as any }],
+        },
+      ],
+    };
+    expect(() => search(cacheNoSummary, "client")).not.toThrow();
+  });
+
+  it("does not crash when member summary is missing", () => {
+    const cacheNoMemberSummary: DalamudCache = {
+      ...fakeCache,
+      namespaces: [
+        {
+          ...fakeCache.namespaces[0],
+          types: [
+            {
+              ...fakeCache.namespaces[0].types[0],
+              membersLoaded: true,
+              members: [{ name: "LocalPlayer", kind: "property", declaration: "", summary: undefined as any }],
+            },
+          ],
+        },
+      ],
+    };
+    expect(() => search(cacheNoMemberSummary, "LocalPlayer")).not.toThrow();
   });
 
   it("searches loaded member names and summaries", () => {

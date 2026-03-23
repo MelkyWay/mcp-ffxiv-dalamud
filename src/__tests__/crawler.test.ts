@@ -84,7 +84,7 @@ describe("isValidCache", () => {
 
   // Nested shape validation (added after review finding #1)
   const validNs = { name: "Dalamud.Game", url: "https://dalamud.dev/api/Dalamud.Game/", types: [] };
-  const validType = { name: "Framework", namespace: "Dalamud.Game", url: "https://dalamud.dev/..." };
+  const validType = { name: "Framework", kind: "class", namespace: "Dalamud.Game", url: "https://dalamud.dev/..." };
 
   it("accepts a cache with well-formed namespaces and types", () => {
     expect(isValidCache({ ...valid, namespaces: [{ ...validNs, types: [validType] }] })).toBe(true);
@@ -120,6 +120,11 @@ describe("isValidCache", () => {
 
   it("rejects type missing url", () => {
     const { url: _, ...rest } = validType;
+    expect(isValidCache({ ...valid, namespaces: [{ ...validNs, types: [rest] }] })).toBe(false);
+  });
+
+  it("rejects type missing kind", () => {
+    const { kind: _, ...rest } = validType;
     expect(isValidCache({ ...valid, namespaces: [{ ...validNs, types: [rest] }] })).toBe(false);
   });
 });
