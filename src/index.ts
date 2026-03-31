@@ -13,6 +13,7 @@ import {
   type DalamudCache,
 } from "./crawler.js";
 import { findNamespace, findType, search } from "./search.js";
+import { MEMBER_KIND_ORDER, groupMembersByKind } from "./type-members.js";
 
 let cache: DalamudCache;
 
@@ -190,14 +191,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (members.length === 0) {
       text += "_No members documented._\n";
     } else {
-      const grouped: Record<string, typeof members> = {};
-      for (const m of members) {
-        if (!grouped[m.kind]) grouped[m.kind] = [];
-        grouped[m.kind].push(m);
-      }
-
-      const kindOrder = ["constructor", "property", "field", "method", "event", "unknown"];
-      for (const kind of kindOrder) {
+      const grouped = groupMembersByKind(members);
+      for (const kind of MEMBER_KIND_ORDER) {
         if (!grouped[kind]) continue;
         text += `## ${capitalize(kind)}s\n\n`;
         for (const m of grouped[kind]) {
