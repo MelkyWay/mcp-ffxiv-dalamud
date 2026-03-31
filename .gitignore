@@ -2,3 +2,9 @@ node_modules/
 dist/
 cache/
 .claude/
+
+# Sonar / coverage artifacts
+.sonarqube/
+.scannerwork/
+coverage/
+coverage*/
