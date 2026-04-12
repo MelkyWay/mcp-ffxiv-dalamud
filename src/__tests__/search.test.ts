@@ -138,34 +138,56 @@ describe("search", () => {
   });
 
   it("clamps limit to max 100", () => {
-    const results = search(fakeCache, "a", 99999);
+    const results = search(fakeCache, "a", { limit: 99999 });
     expect(results.length).toBeLessThanOrEqual(100);
   });
 
   it("clamps negative limit to 1", () => {
-    const results = search(fakeCache, "IClientState", -5);
+    const results = search(fakeCache, "IClientState", { limit: -5 });
     expect(results.length).toBeLessThanOrEqual(1);
   });
 
   it("clamps zero limit to 1", () => {
-    const results = search(fakeCache, "IClientState", 0);
+    const results = search(fakeCache, "IClientState", { limit: 0 });
     expect(results.length).toBeLessThanOrEqual(1);
   });
 
   it("respects reasonable limit", () => {
-    const results = search(fakeCache, "i", 2);
+    const results = search(fakeCache, "i", { limit: 2 });
     expect(results.length).toBeLessThanOrEqual(2);
   });
 
   it("treats NaN limit as default of 20, returning results normally", () => {
-    const results = search(fakeCache, "IClientState", NaN);
+    const results = search(fakeCache, "IClientState", { limit: NaN });
     expect(results.length).toBe(1);
     expect(results[0].type.name).toBe("IClientState");
   });
 
   it("treats Infinity limit as max 100", () => {
-    const results = search(fakeCache, "i", Infinity);
+    const results = search(fakeCache, "i", { limit: Infinity });
     expect(results.length).toBeLessThanOrEqual(100);
+  });
+
+  it("kind filter returns only types of that kind", () => {
+    const results = search(fakeCache, "i", { kind: "interface" });
+    expect(results.length).toBeGreaterThan(0);
+    results.forEach((r) => expect(r.type.kind).toBe("interface"));
+  });
+
+  it("kind filter excludes non-matching types", () => {
+    const results = search(fakeCache, "framework", { kind: "interface" });
+    expect(results.find((r) => r.type.name === "Framework")).toBeUndefined();
+  });
+
+  it("kind filter returning empty when no types match", () => {
+    const results = search(fakeCache, "i", { kind: "enum" });
+    expect(results).toHaveLength(0);
+  });
+
+  it("kind filter combined with limit", () => {
+    const results = search(fakeCache, "i", { kind: "interface", limit: 1 });
+    expect(results.length).toBeLessThanOrEqual(1);
+    results.forEach((r) => expect(r.type.kind).toBe("interface"));
   });
 
   it("does not crash when type summary is missing", () => {

@@ -1,4 +1,4 @@
-import type { DalamudCache, TypeEntry, Member } from "./crawler.js";
+import type { DalamudCache, TypeEntry, Member, TypeKind } from "./crawler.js";
 
 export interface SearchResult {
   score: number;
@@ -12,9 +12,10 @@ export interface SearchResult {
 export function search(
   cache: DalamudCache,
   query: string,
-  limit = 20
+  options?: { limit?: number; kind?: TypeKind }
 ): SearchResult[] {
-  const clampedLimit = Number.isFinite(limit) ? Math.min(Math.max(1, Math.floor(limit)), 100) : 20;
+  const { limit, kind } = options ?? {};
+  const clampedLimit = Number.isFinite(limit) ? Math.min(Math.max(1, Math.floor(limit!)), 100) : 20;
   const q = query.toLowerCase().trim();
   if (!q) return [];
 
@@ -22,6 +23,8 @@ export function search(
 
   for (const ns of cache.namespaces) {
     for (const type of ns.types) {
+      if (kind && type.kind !== kind) continue;
+
       const name = type.name.toLowerCase();
       const summary = (type.summary ?? "").toLowerCase();
       const fullName = `${type.namespace}.${type.name}`.toLowerCase();

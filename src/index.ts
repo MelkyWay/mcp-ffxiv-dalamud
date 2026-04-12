@@ -12,6 +12,7 @@ import {
   saveCache,
   type DalamudCache,
   type Member,
+  type TypeKind,
 } from "./crawler.js";
 import { findNamespace, findType, search, searchMembers, isEventRelated } from "./search.js";
 import { MEMBER_KIND_ORDER, groupMembersByKind } from "./type-members.js";
@@ -73,6 +74,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           query: {
             type: "string",
             description: "Search query, e.g. \"party\", \"inventory\", \"chat\"",
+          },
+          kind: {
+            type: "string",
+            enum: ["class", "interface", "enum", "struct", "delegate", "record", "unknown"],
+            description: "Filter results to a specific type kind",
           },
           limit: {
             type: "number",
@@ -154,6 +160,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    {
+      name: "list_enums",
+      description:
+        "List all enum types in the Dalamud API, optionally filtered by namespace or keyword. Useful for discovering game-state constants (job IDs, inventory slots, addon names, etc.).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Optional substring filter on enum name and summary (case-insensitive)" },
+          namespace: { type: "string", description: 'Restrict to an exact namespace, e.g. "Dalamud.Game.ClientState.JobGauge"' },
+          limit: { type: "number", description: "Maximum number of results (default: 50, max: 200)" },
+        },
+      },
+    },
   ],
 }));
 
@@ -224,7 +243,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (!typeEntry) {
       // Try a search to suggest alternatives
-      const suggestions = search(cache, typeName, 5);
+      const suggestions = search(cache, typeName, { limit: 5 });
       const suggestionText =
         suggestions.length > 0
           ? `\n\nDid you mean one of these?\n${suggestions.map((r) => `- ${r.type.namespace}.${r.type.name}`).join("\n")}`
@@ -278,17 +297,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (!query) {
       return { content: [{ type: "text", text: 'Missing required argument: "query"' }], isError: true };
     }
+    const TYPE_KINDS: TypeKind[] = ["class", "interface", "enum", "struct", "delegate", "record", "unknown"];
+    const rawKind = (args as any)?.kind;
+    if (rawKind !== undefined && !TYPE_KINDS.includes(rawKind)) {
+      return { content: [{ type: "text", text: `Invalid kind "${rawKind}". Must be one of: ${TYPE_KINDS.join(", ")}` }], isError: true };
+    }
+    const kind = rawKind as TypeKind | undefined;
     const rawLimit = (args as any)?.limit;
     const limit = Number.isFinite(rawLimit) ? rawLimit : 20;
-    const results = search(cache, query, limit);
+    const results = search(cache, query, { limit, kind });
 
     if (results.length === 0) {
+      const kindSuffix = kind ? ` of kind "${kind}"` : "";
       return {
-        content: [{ type: "text", text: `No results found for "${query}".` }],
+        content: [{ type: "text", text: `No results found for "${query}"${kindSuffix}.` }],
       };
     }
 
-    let text = `# Search results for "${query}" (${results.length} found)\n\n`;
+    let text = `# Search results for "${query}" (${results.length} found)\n`;
+    if (kind) text += `Filtered by kind: ${kind}\n`;
+    text += "\n";
     for (const r of results) {
       text += `## ${r.type.namespace}.${r.type.name}\n`;
       text += `**Kind:** ${r.type.kind}\n`;
@@ -377,7 +405,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     const typeEntry = findType(cache, typeName);
     if (!typeEntry) {
-      const suggestions = search(cache, typeName, 5);
+      const suggestions = search(cache, typeName, { limit: 5 });
       const suggestionText = suggestions.length > 0
         ? `\n\nDid you mean one of these?\n${suggestions.map((r) => `- ${r.type.namespace}.${r.type.name}`).join("\n")}`
         : "";
@@ -511,6 +539,62 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         text += `URL: ${t.url}\n\n`;
       }
     }
+    return { content: [{ type: "text", text }] };
+  }
+
+  if (name === "list_enums") {
+    const query = typeof (args as any)?.query === "string" ? (args as any).query.trim() : null;
+    const nsFilter = typeof (args as any)?.namespace === "string" ? (args as any).namespace.toLowerCase().trim() : null;
+    const rawLimit = (args as any)?.limit;
+    const clampedLimit = Number.isFinite(rawLimit) ? Math.min(Math.max(1, Math.floor(rawLimit)), 200) : 50;
+
+    const q = query ? query.toLowerCase() : null;
+    const byNs = new Map<string, typeof cache.namespaces[0]["types"]>();
+
+    for (const ns of cache.namespaces) {
+      if (nsFilter && ns.name.toLowerCase() !== nsFilter) continue;
+
+      for (const t of ns.types) {
+        if (t.kind !== "enum") continue;
+        if (q && !t.name.toLowerCase().includes(q) && !(t.summary ?? "").toLowerCase().includes(q)) continue;
+
+        if (!byNs.has(t.namespace)) byNs.set(t.namespace, []);
+        byNs.get(t.namespace)!.push(t);
+      }
+    }
+
+    const total = [...byNs.values()].reduce((a, ts) => a + ts.length, 0);
+
+    if (total === 0) {
+      const parts: string[] = [];
+      if (query) parts.push(`matching "${query}"`);
+      if (nsFilter) parts.push(`in namespace "${(args as any).namespace}"`);
+      return { content: [{ type: "text", text: `No enums found${parts.length ? " " + parts.join(" ") : ""}.` }] };
+    }
+
+    const sortedNs = [...byNs.keys()].sort();
+    let emitted = 0;
+
+    let text = `# Dalamud API Enums (${total} total)\n`;
+    if (query) text += `Filtered by: "${query}"\n`;
+    if (nsFilter) text += `Namespace: ${(args as any).namespace}\n`;
+    text += "\n";
+
+    outer: for (const nsName of sortedNs) {
+      const types = byNs.get(nsName)!.sort((a, b) => a.name.localeCompare(b.name));
+      text += `## ${nsName}\n\n`;
+      for (const t of types) {
+        if (emitted >= clampedLimit) {
+          text += `_...and ${total - emitted} more. Use a narrower query or namespace filter to see more._\n`;
+          break outer;
+        }
+        text += `### ${t.name}\n`;
+        if (t.summary) text += `${t.summary}\n`;
+        text += `URL: ${t.url}\n\n`;
+        emitted++;
+      }
+    }
+
     return { content: [{ type: "text", text }] };
   }
 
