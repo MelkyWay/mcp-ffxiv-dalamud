@@ -231,7 +231,7 @@ export async function crawlTypePage(typeEntry: TypeEntry): Promise<Member[]> {
     }
 
     if (tag === "h3") {
-      const name = $(el).text().trim();
+      const name = $(el).text().replace(/\u200b/g, "").trim();
       if (!name || name.length === 0) return;
 
       // Summary = next paragraph before an h6

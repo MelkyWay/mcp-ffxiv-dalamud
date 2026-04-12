@@ -11,8 +11,9 @@ import {
   getOrBuildCache,
   saveCache,
   type DalamudCache,
+  type Member,
 } from "./crawler.js";
-import { findNamespace, findType, search } from "./search.js";
+import { findNamespace, findType, search, searchMembers } from "./search.js";
 import { MEMBER_KIND_ORDER, groupMembersByKind } from "./type-members.js";
 
 let cache: DalamudCache;
@@ -92,6 +93,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description:
         "Return cache status: build time, Dalamud version, namespace/type counts, and lazy-member coverage. Use to decide whether to call refresh_cache.",
       inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "search_members",
+      description:
+        "Search for specific members (properties, methods, fields, events, constructors) across all types that have already been loaded. Fast — no network access required. Gets more useful over time as more types are fetched via get_type.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Member name or summary keyword" },
+          kind: {
+            type: "string",
+            enum: ["constructor", "property", "field", "method", "event", "unknown"],
+            description: "Filter to a specific member kind",
+          },
+          namespace: { type: "string", description: 'Restrict to an exact namespace, e.g. "Dalamud.Plugin.Services"' },
+          limit: { type: "number", description: "Maximum results (default: 20, max: 50)" },
+        },
+        required: ["query"],
+      },
+    },
+    {
+      name: "get_member",
+      description:
+        "Get full documentation for a specific member on a Dalamud type. Fetches the type's members if not already loaded.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          type: { type: "string", description: 'Type name, e.g. "IClientState" or "Dalamud.Plugin.Services.IClientState"' },
+          member: { type: "string", description: 'Member name (case-insensitive), e.g. "LocalPlayer"' },
+        },
+        required: ["type", "member"],
+      },
     },
   ],
 }));
@@ -268,6 +301,99 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     text += `**Types:** ${totalTypes}\n`;
     text += `**Members loaded:** ${loadedTypes}/${totalTypes} types (${Math.round((loadedTypes / totalTypes) * 100)}%)\n`;
 
+    return { content: [{ type: "text", text }] };
+  }
+
+  if (name === "search_members") {
+    const query = typeof (args as any)?.query === "string" ? (args as any).query : null;
+    if (!query) {
+      return { content: [{ type: "text", text: 'Missing required argument: "query"' }], isError: true };
+    }
+    const rawKind = (args as any)?.kind;
+    if (rawKind !== undefined && !MEMBER_KIND_ORDER.includes(rawKind)) {
+      return { content: [{ type: "text", text: `Invalid kind "${rawKind}". Must be one of: ${MEMBER_KIND_ORDER.join(", ")}` }], isError: true };
+    }
+    const kind = rawKind as Member["kind"] | undefined;
+    const namespace = typeof (args as any)?.namespace === "string" ? (args as any).namespace : undefined;
+    const rawLimit = (args as any)?.limit;
+    const limit = Number.isFinite(rawLimit) ? rawLimit : 20;
+    const results = searchMembers(cache, query, { kind, namespace, limit });
+
+    if (results.length === 0) {
+      return {
+        content: [{ type: "text", text: `No members matching "${query}" found in loaded types.\n\nUse get_type on a type first to load its members, then retry.` }],
+      };
+    }
+
+    let text = `# Member search results for "${query}" (${results.length} found)\n\n`;
+    for (const r of results) {
+      text += `## ${r.ownerName}.${r.member.name}\n`;
+      text += `**Kind:** ${r.member.kind}  **Type:** ${r.ownerNamespace}.${r.ownerName}\n`;
+      text += `**URL:** ${r.ownerUrl}\n`;
+      if (r.member.summary) text += `${r.member.summary}\n`;
+      if (r.member.declaration) text += `\`\`\`csharp\n${r.member.declaration}\n\`\`\`\n`;
+      text += "\n";
+    }
+    return { content: [{ type: "text", text }] };
+  }
+
+  if (name === "get_member") {
+    const typeName = typeof (args as any)?.type === "string" ? (args as any).type : null;
+    if (!typeName) {
+      return { content: [{ type: "text", text: 'Missing required argument: "type"' }], isError: true };
+    }
+    const memberName = typeof (args as any)?.member === "string" ? (args as any).member : null;
+    if (!memberName) {
+      return { content: [{ type: "text", text: 'Missing required argument: "member"' }], isError: true };
+    }
+
+    const typeEntry = findType(cache, typeName);
+    if (!typeEntry) {
+      const suggestions = search(cache, typeName, 5);
+      const suggestionText = suggestions.length > 0
+        ? `\n\nDid you mean one of these?\n${suggestions.map((r) => `- ${r.type.namespace}.${r.type.name}`).join("\n")}`
+        : "";
+      return { content: [{ type: "text", text: `Type "${typeName}" not found.${suggestionText}` }], isError: true };
+    }
+
+    if (!typeEntry.membersLoaded) {
+      await ensureMembers(typeEntry);
+      saveCache(cache);
+    }
+
+    const member = (typeEntry.members ?? []).find(
+      (m) => (m.name ?? "").toLowerCase() === memberName.toLowerCase()
+    );
+
+    if (!member) {
+      const grouped = groupMembersByKind(typeEntry.members ?? []);
+      const total = (typeEntry.members ?? []).length;
+      let text = `Member "${memberName}" not found on ${typeEntry.name}.\n\n`;
+      if (total === 0) {
+        text += "_No members documented._\n";
+      } else {
+        text += `**Available members** (${total} total):\n`;
+        let shown = 0;
+        for (const kind of MEMBER_KIND_ORDER) {
+          if (!grouped[kind] || shown >= 10) break;
+          text += `\n### ${capitalize(kind)}s\n`;
+          for (const m of grouped[kind]) {
+            if (shown >= 10) break;
+            text += `- ${m.name}\n`;
+            shown++;
+          }
+        }
+        if (total > 10) text += `\n_...and ${total - 10} more. Use get_type for the full list._\n`;
+      }
+      return { content: [{ type: "text", text }], isError: true };
+    }
+
+    let text = `# ${typeEntry.name}.${member.name}\n`;
+    text += `**Kind:** ${member.kind}\n`;
+    text += `**Type:** ${typeEntry.namespace}.${typeEntry.name}\n`;
+    text += `**URL:** ${typeEntry.url}\n\n`;
+    if (member.summary) text += `${member.summary}\n\n`;
+    if (member.declaration) text += `\`\`\`csharp\n${member.declaration}\n\`\`\`\n`;
     return { content: [{ type: "text", text }] };
   }
 

@@ -1,4 +1,4 @@
-import type { DalamudCache, TypeEntry } from "./crawler.js";
+import type { DalamudCache, TypeEntry, Member } from "./crawler.js";
 
 export interface SearchResult {
   score: number;
@@ -82,6 +82,57 @@ export function findType(
   }
 
   return undefined;
+}
+
+export interface MemberSearchResult {
+  score: number;
+  member: Member;
+  ownerName: string;
+  ownerNamespace: string;
+  ownerUrl: string;
+}
+
+/** Search members across all loaded types. No HTTP — works on already-loaded members only. */
+export function searchMembers(
+  cache: DalamudCache,
+  query: string,
+  options?: { kind?: Member["kind"]; namespace?: string; limit?: number }
+): MemberSearchResult[] {
+  const { kind, namespace, limit } = options ?? {};
+  const clampedLimit = Number.isFinite(limit) ? Math.min(Math.max(1, Math.floor(limit!)), 50) : 20;
+  const q = query.toLowerCase().trim();
+  if (!q) return [];
+
+  const nsFilter = namespace?.toLowerCase().trim() ?? null;
+  const results: MemberSearchResult[] = [];
+
+  for (const ns of cache.namespaces) {
+    if (nsFilter && ns.name.toLowerCase() !== nsFilter) continue;
+
+    for (const type of ns.types) {
+      if (!type.membersLoaded) continue;
+
+      for (const member of type.members ?? []) {
+        if (kind && member.kind !== kind) continue;
+
+        const name = (member.name ?? "").toLowerCase();
+        const summary = (member.summary ?? "").toLowerCase();
+
+        let score = 0;
+        if (name === q) score = 1000;
+        else if (name.startsWith(q)) score = 500;
+        else if (name.includes(q)) score = 200;
+        else if (summary.includes(q)) score = 50;
+
+        if (score > 0) {
+          results.push({ score, member, ownerName: type.name, ownerNamespace: type.namespace, ownerUrl: type.url });
+        }
+      }
+    }
+  }
+
+  results.sort((a, b) => b.score - a.score || a.ownerName.localeCompare(b.ownerName));
+  return results.slice(0, clampedLimit);
 }
 
 /** Find a namespace by exact name. Case-insensitive. */
