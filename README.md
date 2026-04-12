@@ -38,9 +38,15 @@ Restart your client after editing the config. On first launch the server crawls 
 | Tool | Description |
 |------|-------------|
 | `list_namespaces` | List all Dalamud API namespaces |
-| `get_namespace` | List all types in a namespace |
+| `get_namespace` | List all types in a namespace, grouped by kind |
 | `get_type` | Full docs for a type — properties, methods, events, declarations |
-| `search` | Keyword search across all types and summaries (max 100 results) |
+| `search` | Keyword search across all types and summaries; optional `kind` filter (e.g. `"enum"`, `"interface"`) |
+| `list_enums` | Browse all enum types, optionally filtered by namespace or keyword |
+| `list_services` | List injectable services from `Dalamud.Plugin.Services` |
+| `find_events` | Find event arg types and delegate subscription points across the API |
+| `search_members` | Search properties/methods/events across already-loaded types (no network) |
+| `get_member` | Full docs for a specific member on a type |
+| `health` | Cache status: build time, Dalamud version, member coverage |
 | `refresh_cache` | Re-crawl dalamud.dev and rebuild the cache |
 
 ### Example prompts
@@ -48,6 +54,8 @@ Restart your client after editing the config. On first launch the server crawls 
 - *"What services are available in Dalamud.Plugin.Services?"*
 - *"Show me IClientState — what properties does it have?"*
 - *"Search for anything related to inventory"*
+- *"What enums exist for inventory slot types?"*
+- *"How do I subscribe to framework events in Dalamud?"*
 - *"How do I register a slash command in Dalamud?"*
 
 These work with any MCP-capable assistant that supports tool use.
@@ -68,15 +76,16 @@ npm test        # Run tests (Vitest)
 npm run build   # Compile to dist/
 ```
 
-Tests cover `search`, `findType`, `findNamespace`, `normalizeKind`, and `isValidCache` — the core pure-function logic. The crawler itself (network I/O) is not unit-tested.
+Tests cover `search` (including kind filter), `searchMembers`, `findType`, `findNamespace`, `isEventRelated`, and `isValidCache` — the core pure-function logic. The crawler itself (network I/O) is not unit-tested.
 
 ## Project structure
 
 ```
 src/
-  index.ts       # MCP server, tool handlers
-  crawler.ts     # Crawling, caching, types
-  search.ts      # findType, findNamespace, search
+  index.ts          # MCP server, tool handlers
+  crawler.ts        # Crawling, caching, types
+  search.ts         # findType, findNamespace, search, searchMembers, isEventRelated
+  type-members.ts   # groupMembersByKind, MEMBER_KIND_ORDER
   __tests__/
     crawler.test.ts
     search.test.ts
