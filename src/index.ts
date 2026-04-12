@@ -87,6 +87,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "Re-crawl dalamud.dev and rebuild the local documentation cache. Use when docs seem outdated.",
       inputSchema: { type: "object", properties: {} },
     },
+    {
+      name: "health",
+      description:
+        "Return cache status: build time, Dalamud version, namespace/type counts, and lazy-member coverage. Use to decide whether to call refresh_cache.",
+      inputSchema: { type: "object", properties: {} },
+    },
   ],
 }));
 
@@ -243,6 +249,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         },
       ],
     };
+  }
+
+  if (name === "health") {
+    const totalTypes = cache.namespaces.reduce((a, ns) => a + ns.types.length, 0);
+    const loadedTypes = cache.namespaces.reduce(
+      (a, ns) => a + ns.types.filter((t) => t.membersLoaded).length, 0
+    );
+    const ageMs = Date.now() - new Date(cache.builtAt).getTime();
+    const ageDays = Math.floor(ageMs / 86_400_000);
+    const ageHours = Math.floor((ageMs % 86_400_000) / 3_600_000);
+
+    let text = `# Cache Health\n\n`;
+    text += `**Built:** ${cache.builtAt}`;
+    text += ageDays > 0 ? ` (${ageDays}d ${ageHours}h ago)\n` : ` (${ageHours}h ago)\n`;
+    if (cache.dalamudVersion) text += `**Dalamud version:** ${cache.dalamudVersion}\n`;
+    text += `**Namespaces:** ${cache.namespaces.length}\n`;
+    text += `**Types:** ${totalTypes}\n`;
+    text += `**Members loaded:** ${loadedTypes}/${totalTypes} types (${Math.round((loadedTypes / totalTypes) * 100)}%)\n`;
+
+    return { content: [{ type: "text", text }] };
   }
 
   return {
