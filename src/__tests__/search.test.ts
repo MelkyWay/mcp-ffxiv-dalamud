@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { search, findType, findNamespace, searchMembers } from "../search.js";
-import type { DalamudCache } from "../crawler.js";
+import { search, findType, findNamespace, searchMembers, isEventRelated } from "../search.js";
+import type { DalamudCache, TypeEntry } from "../crawler.js";
 
 const fakeCache: DalamudCache = {
   cacheVersion: 2,
@@ -419,5 +419,52 @@ describe("searchMembers", () => {
       }],
     };
     expect(() => searchMembers(cache, "Bar")).not.toThrow();
+  });
+});
+
+// ── isEventRelated ────────────────────────────────────────────────────────────
+
+function makeType(overrides: Partial<TypeEntry>): TypeEntry {
+  return {
+    name: "Foo",
+    kind: "class",
+    namespace: "Test",
+    url: "https://dalamud.dev/api/Test/",
+    summary: "",
+    ...overrides,
+  };
+}
+
+describe("isEventRelated", () => {
+  it("returns true for any delegate regardless of name", () => {
+    expect(isEventRelated(makeType({ kind: "delegate", name: "SomeHandler" }))).toBe(true);
+  });
+
+  it("returns true when name contains 'event'", () => {
+    expect(isEventRelated(makeType({ name: "AddonEventType", kind: "enum" }))).toBe(true);
+  });
+
+  it("returns true for EventArgs in name", () => {
+    expect(isEventRelated(makeType({ name: "InventoryEventArgs", kind: "class" }))).toBe(true);
+  });
+
+  it("returns true when summary contains 'event'", () => {
+    expect(isEventRelated(makeType({ name: "IAddonEventManager", kind: "interface", summary: "Manages addon events." }))).toBe(true);
+  });
+
+  it("returns false for a plain interface with no event content", () => {
+    expect(isEventRelated(makeType({ name: "IClientState", kind: "interface", summary: "Provides access to client state." }))).toBe(false);
+  });
+
+  it("returns false when summary is undefined", () => {
+    expect(isEventRelated(makeType({ name: "IClientState", kind: "interface", summary: undefined as any }))).toBe(false);
+  });
+
+  it("returns true for an enum named GameInventoryEvent", () => {
+    expect(isEventRelated(makeType({ name: "GameInventoryEvent", kind: "enum" }))).toBe(true);
+  });
+
+  it("returns true for a class named TimingEvent", () => {
+    expect(isEventRelated(makeType({ name: "TimingEvent", kind: "class" }))).toBe(true);
   });
 });

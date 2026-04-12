@@ -135,6 +135,16 @@ export function searchMembers(
   return results.slice(0, clampedLimit);
 }
 
+/** Returns true if a type is event-related (delegate, event arg, or event enum). */
+export function isEventRelated(type: TypeEntry): boolean {
+  const name = type.name.toLowerCase();
+  const summary = (type.summary ?? "").toLowerCase();
+  if (type.kind === "delegate") return true;
+  if (name.includes("event")) return true;
+  if (summary.includes("event")) return true;
+  return false;
+}
+
 /** Find a namespace by exact name. Case-insensitive. */
 export function findNamespace(cache: DalamudCache, name: string) {
   const q = name.toLowerCase().trim();

@@ -13,7 +13,7 @@ import {
   type DalamudCache,
   type Member,
 } from "./crawler.js";
-import { findNamespace, findType, search, searchMembers } from "./search.js";
+import { findNamespace, findType, search, searchMembers, isEventRelated } from "./search.js";
 import { MEMBER_KIND_ORDER, groupMembersByKind } from "./type-members.js";
 
 let cache: DalamudCache;
@@ -124,6 +124,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           member: { type: "string", description: 'Member name (case-insensitive), e.g. "LocalPlayer"' },
         },
         required: ["type", "member"],
+      },
+    },
+    {
+      name: "list_services",
+      description:
+        "List all DI-injectable services from Dalamud.Plugin.Services — the primary namespace for plugin authors. Returns interfaces only by default; pass includeDelegate: true to also show event-delegate types.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Optional substring filter on name and summary (case-insensitive)" },
+          includeDelegate: { type: "boolean", description: "When true, include delegate types alongside interfaces. Default: false." },
+        },
+      },
+    },
+    {
+      name: "find_events",
+      description:
+        "Find event-related types and delegate subscription points across the Dalamud API. Useful for locating EventArgs classes, event enums, and delegate types used to subscribe to framework events.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Optional substring filter on name and summary (case-insensitive)" },
+          kind: {
+            type: "string",
+            enum: ["type", "delegate", "all"],
+            description: '"type" = event arg classes/enums/interfaces; "delegate" = delegate subscription types; "all" = both. Default: "all".',
+          },
+        },
       },
     },
   ],
@@ -394,6 +422,95 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     text += `**URL:** ${typeEntry.url}\n\n`;
     if (member.summary) text += `${member.summary}\n\n`;
     if (member.declaration) text += `\`\`\`csharp\n${member.declaration}\n\`\`\`\n`;
+    return { content: [{ type: "text", text }] };
+  }
+
+  if (name === "list_services") {
+    const query = typeof (args as any)?.query === "string" ? (args as any).query.trim() : null;
+    const includeDelegate = (args as any)?.includeDelegate === true;
+
+    const ns = findNamespace(cache, "Dalamud.Plugin.Services");
+    if (!ns) {
+      return { content: [{ type: "text", text: "Dalamud.Plugin.Services not found in cache. Try refresh_cache." }], isError: true };
+    }
+
+    let types = ns.types.filter(
+      (t) => t.kind === "interface" || (includeDelegate && t.kind === "delegate")
+    );
+
+    if (query) {
+      const q = query.toLowerCase();
+      types = types.filter(
+        (t) => t.name.toLowerCase().includes(q) || (t.summary ?? "").toLowerCase().includes(q)
+      );
+    }
+
+    types.sort((a, b) => a.name.localeCompare(b.name));
+
+    if (types.length === 0) {
+      return { content: [{ type: "text", text: query ? `No services matching "${query}" found.` : "No services found." }] };
+    }
+
+    let text = `# Dalamud.Plugin.Services — Services (${types.length})\n\n`;
+    if (query) text += `Filtered by: "${query}"\n\n`;
+    for (const t of types) {
+      text += `### ${t.name}`;
+      if (t.kind === "delegate") text += ` _(delegate)_`;
+      text += `\n`;
+      if (t.summary) text += `${t.summary}\n`;
+      text += `URL: ${t.url}\n\n`;
+    }
+    return { content: [{ type: "text", text }] };
+  }
+
+  if (name === "find_events") {
+    const query = typeof (args as any)?.query === "string" ? (args as any).query.trim() : null;
+    const rawKind = (args as any)?.kind;
+    const kindFilter: "type" | "delegate" | "all" =
+      ["type", "delegate", "all"].includes(rawKind) ? rawKind : "all";
+
+    type EventMatch = { ns: string; entry: typeof cache.namespaces[0]["types"][0] };
+    const matches: EventMatch[] = [];
+
+    for (const ns of cache.namespaces) {
+      for (const t of ns.types) {
+        if (!isEventRelated(t)) continue;
+        if (kindFilter === "type" && t.kind === "delegate") continue;
+        if (kindFilter === "delegate" && t.kind !== "delegate") continue;
+        if (query) {
+          const q = query.toLowerCase();
+          if (!t.name.toLowerCase().includes(q) && !(t.summary ?? "").toLowerCase().includes(q)) continue;
+        }
+        matches.push({ ns: t.namespace, entry: t });
+      }
+    }
+
+    if (matches.length === 0) {
+      return { content: [{ type: "text", text: query ? `No event-related types matching "${query}" found.` : "No event-related types found in cache." }] };
+    }
+
+    // Group by namespace
+    const byNs = new Map<string, typeof matches[0]["entry"][]>();
+    for (const m of matches) {
+      if (!byNs.has(m.ns)) byNs.set(m.ns, []);
+      byNs.get(m.ns)!.push(m.entry);
+    }
+    const sortedNs = [...byNs.keys()].sort();
+
+    let text = `# Event-related types (${matches.length})\n`;
+    if (query) text += `Filtered by: "${query}"\n`;
+    if (kindFilter !== "all") text += `Kind: ${kindFilter}\n`;
+    text += "\n";
+
+    for (const nsName of sortedNs) {
+      text += `## ${nsName}\n\n`;
+      const nsTypes = byNs.get(nsName)!.sort((a, b) => a.name.localeCompare(b.name));
+      for (const t of nsTypes) {
+        text += `### ${t.name} _(${t.kind})_\n`;
+        if (t.summary) text += `${t.summary}\n`;
+        text += `URL: ${t.url}\n\n`;
+      }
+    }
     return { content: [{ type: "text", text }] };
   }
 
